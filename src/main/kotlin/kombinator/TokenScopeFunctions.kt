@@ -32,16 +32,16 @@ inline fun <T : SingleMatchToken, R> T.option(block: QualifiedOptionToken.() -> 
 inline fun <T : SingleMatchToken, R> T.star(block: QualifiedStarToken.() -> R) = block(star())
 
 /**
- * Provides a scope with the receiver as the single matched [CharacterToken].
+ * Provides a scope with the receiver as the single matched [CharToken].
  * @throws TokenMismatchException the single match is not or is not delegated to a character literal
  */
-inline fun <T : SingleMatchToken, R> T.character(block: QualifiedCharacterToken.() -> R) = block(character())
+inline fun <T : SingleMatchToken, R> T.char(block: QualifiedCharToken.() -> R) = block(character())
 
 /**
- * Provides a scope with the receiver as the single matched [TextToken].
+ * Provides a scope with the receiver as the single matched [StringToken].
  * @throws TokenMismatchException the single match is not or is not delegated to a text literal
  */
-inline fun <T : SingleMatchToken, R> T.text(block: QualifiedTextToken.() -> R) = block(text())
+inline fun <T : SingleMatchToken, R> T.text(block: QualifiedStringToken.() -> R) = block(text())
 
 /**
  * Provides a scope with the receiver as the single matched [SwitchToken].
@@ -80,16 +80,16 @@ inline fun <R> SequenceToken.optionAt(index: Int, block: QualifiedOptionToken.()
 inline fun <R> SequenceToken.starAt(index: Int, block: QualifiedStarToken.() -> R) = block(starAt(index))
 
 /**
- * Provides a scope with the receiver as the matched [CharacterToken] at the specified index in this sequence.
+ * Provides a scope with the receiver as the matched [CharToken] at the specified index in this sequence.
  * @throws TokenMismatchException the match is not or is not delegated to a character literal
  */
-inline fun <R> SequenceToken.characterAt(index: Int, block: QualifiedCharacterToken.() -> R) = block(characterAt(index))
+inline fun <R> SequenceToken.charAt(index: Int, block: QualifiedCharToken.() -> R) = block(charAt(index))
 
 /**
- * Provides a scope with the receiver as the matched [TextToken] at the specified index in this sequence.
+ * Provides a scope with the receiver as the matched [StringToken] at the specified index in this sequence.
  * @throws TokenMismatchException the match is not or is not delegated to a text literal
  */
-inline fun <R> SequenceToken.textAt(index: Int, block: QualifiedTextToken.() -> R) = block(textAt(index))
+inline fun <R> SequenceToken.stringAt(index: Int, block: QualifiedStringToken.() -> R) = block(stringAt(index))
 
 /**
  * Provides a scope with the receiver as the matched [SwitchToken] at the specified index in this sequence.

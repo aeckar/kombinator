@@ -1,9 +1,17 @@
-
-
 @file:Suppress("UNUSED")
 package kombinator
 
-import kombinator.internal.*
+import kombinator.charstreams.AbstractCharStream
+import kombinator.charstreams.FileCharStream
+import kombinator.charstreams.LexicalAnalyzerState
+import kombinator.charstreams.StringCharStream
+import kombinator.util.*
+import kombinator.symbols.*
+import kombinator.symbols.Character
+import kombinator.symbols.Junction
+import kombinator.symbols.Text
+import kombinator.symbols.Switch
+import kombinator.symbols.Symbol
 import java.io.*
 
 // TODO test
@@ -14,10 +22,8 @@ import java.io.*
  * @return a context-free grammar with the given definition and specifications
  */
 @Suppress("UNCHECKED_CAST")
-fun <R,M : Grammar.MutableState> grammar(
-    formalGrammar: String,
-    cachePath: String? = null,
-    builder: Grammar<R,M>.BuilderContext.() -> Unit
+fun <R,M : MutableState> grammar(
+    builder: Grammar<R,M>.BuilderScope.() -> Unit
 ): Grammar<R,M> {
     val needsCache = cachePath?.let {
         val file = File(cachePath)
@@ -32,8 +38,8 @@ fun <R,M : Grammar.MutableState> grammar(
         }
     }
     return Grammar<R,M>().apply {
-        rules = MetaGrammar.grammar.parse(formalGrammar, MetaGrammar.MutableState())
-        builder(BuilderContext())
+        rules = metaGrammar.parse(formalGrammar, MetaGrammarState())
+        builder(BuilderScope())
         needsCache?.let {
             ObjectOutputStream(FileOutputStream(cachePath)).use {
                 it.writeUnshared(this)
@@ -47,7 +53,7 @@ fun <R,M : Grammar.MutableState> grammar(
  * A context-free grammar used to parse complex expressions in a string.
  * @param R the type of the
  */
-class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable {
+class Grammar<R,M : MutableState> internal constructor() : Serializable {
     private val listeners = mutableMapOf<String, Token.(M) -> Any?>()
     internal var rules: MutableMap<String, Symbol> by AssignOnce()
     private var startID: String by AssignOnce()
@@ -85,23 +91,19 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
      */
     fun parseFileOrNull(inputPath: String, mutableState: M) = parseOrNull(FileCharStream(inputPath), mutableState)
 
-
-    /**
-     * Contains mutable properties which are manipulated by each listener invokation.
-     * Useful for collecting information regardless of location in the parse tree.
-     * Grammars that do not need such information should create an instance of the base class.
-     * The mutable state of parsing attempt must be a subclass of this class, as this class holds
-     * information regarding the position of the cursor in a source of input.
-     */
-    open class MutableState {
-        internal var position = 0
-    }
-
     /**
      * The scope wherein the start rule, skip rule, and listeners of a grammar are defined.
      */
-    inner class BuilderContext internal constructor() {
-        private val listenerDefinition = ListenerDefinition<Any?>() // Reused for each definition
+    inner class BuilderScope internal constructor() {
+        internal var rules: RuleMap
+            get() = this@Grammar.rules
+            set(value) {
+                this@Grammar.rules = value
+            }
+        var name: String by AssignOnce()
+        var definition: String by AssignOnce()
+
+        private val sharedListener = Listener()
 
         /**
          * Imports a rule from another grammar.
@@ -115,7 +117,7 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
         /**
          * Declares the rule with this ID to be the principle rule.
          */
-        fun ListenerDefinition<out R>.start() {
+        fun Listener.start() {
             try {
                 startID = id
             } catch (e: ReassignmentException) {
@@ -144,8 +146,7 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
          * @throws MissingRuleException the rule is not present in the definition and has not been imported
          * @throws ReassignmentException the listener for this rule has already been declared
          */
-        @Suppress("UNCHECKED_CAST")
-        operator fun <P> String.invoke(listener: Token.(M) -> P): ListenerDefinition<P> {
+        operator fun <P> String.invoke(listener: Token.(M) -> P): Listener<P> {
             if (this !in rules) {
                 throw MissingRuleException("Rule '$this' is undefined")
             }
@@ -153,64 +154,68 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
                 throw ReassignmentException("Listener for rule '$this' is already defined")
             }
             listeners[this] = listener
-            return (listenerDefinition as ListenerDefinition<P>).apply { id = this@invoke }
+            return sharedListener.apply { id = this@invoke }
         }
+
+        /* ------------------------------ listener entry points ------------------------------ */
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a sequence of tokens.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.sequence(listener: SequenceToken.(M) -> P) = listenerOf<SequenceSymbol,_,_>(listener)
+        infix fun String.sequence(listener: SequenceToken.(M) -> Any?) = listenerOf<Sequence,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a rule defined using the '|' operator.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.junction(listener: JunctionToken.(M) -> P) =  listenerOf<JunctionSymbol,_,_>(listener)
+        infix fun String.junction(listener: JunctionToken.(M) -> Any?) =  listenerOf<Junction,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a rule defined using the '' operator.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.multiple(listener: MultipleToken.(M) -> P) = listenerOf<MultipleSymbol,_,_>(listener)
+        infix fun String.multiple(listener: MultipleToken.(M) -> Any?) = listenerOf<Repetition,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a rule defined using the '?' operator.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.option( listener: OptionToken.(M) -> P) = listenerOf<OptionSymbol,_,_>(listener)
+        infix fun String.option( listener: OptionToken.(M) -> Any?) = listenerOf<Option,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a rule defined using the '*' operator.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.star(listener: StarToken.(M) -> P) = listenerOf<StarSymbol,_,_>(listener)
+        infix fun String.star(listener: StarToken.(M) -> Any?) = listenerOf<RepeatOption,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a character literal.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.character(listener: CharacterToken.(M) -> P) = listenerOf<CharSymbol,_,_>(listener)
+        infix fun String.char(listener: CharToken.(M) -> Any?) = listenerOf<Character,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a text literal.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.text(listener: TextToken.(M) -> P) = listenerOf<StringSymbol,_,_>(listener)
+        infix fun String.text(listener: StringToken.(M) -> Any?) = listenerOf<Text,_,_>(listener)
 
         /**
          * Assigns the rule with this ID the given listener.
          * Asserts that the given rule is delegated to a switch literal.
          * @throws RuleMismatchException the assertion fails
          */
-        fun <P> String.switch(listener: SwitchToken.(M) -> P) = listenerOf<SwitchSymbol,_,_>(listener)
+        infix fun String.switch(listener: SwitchToken.(M) -> Any?) = listenerOf<Switch,_,_>(listener)
+
+        /* ------------------------------ client-side error handling ------------------------------ */
 
         /**
          * Throws an exception containing the error message and the current substring.
@@ -220,10 +225,11 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
             throw ParseException("$message (in '$substring')", mutableState.position)
         }
 
-        @Suppress("UNCHECKED_CAST")
-        private inline fun <reified S : Symbol,reified T : Token,P> String.listenerOf(
-            crossinline listener: T.(M) -> P
-        ): ListenerDefinition<P> {
+        /* ------------------------------ private API ------------------------------ */
+
+        private inline fun <reified S : Symbol,reified T : Token> String.listenerOf(
+            crossinline listener: T.(M) -> Any?
+        ): Listener {
             invoke {
                 if ((this as ContextFreeToken).origin.reference()::class != S::class) {
                     throw RuleMismatchException("Listener type does not agree with type of rule '$this'")
@@ -235,11 +241,11 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
                 throw RuleMismatchException("Type of rule '$this' described by listener (${S::class.simpleName}) " +
                         "does not agree with actual type (${symbol::class.simpleName})")
             }
-            return (listenerDefinition as ListenerDefinition<P>).apply { id = this@listenerOf }
+            return sharedListener.apply { id = this@listenerOf }
         }
     }
 
-    private fun parse(inputStream: CharStream, mutableState: M): R {
+    private fun parse(inputStream: AbstractCharStream, mutableState: M): R {
         inputStream.use {
             val start = try {
                 rules.getValue(startID)
@@ -251,17 +257,17 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
             } catch (_: NoSuchElementException) {
                 throw MissingRuleException("Skip symbol is not defined")
             }
-            val recursions = mutableListOf<String>()
+            val parserState = LexicalAnalyzerState(inputStream, skip)
             val rootToken: ContextFreeToken
-            if (mutableState is MetaGrammar.MutableState) { // Meta-grammar definition asserted to be legal syntax
-                 rootToken = start.match(inputStream, skip, recursions) // Base of parse tree
+            if (mutableState is MetaGrammarState) { // Meta-grammar definition asserted to be legal syntax
+                 rootToken = start.match(parserState) // Base of parse tree
             } else {
-                skip.consume(inputStream, recursions)
-                rootToken = start.match(inputStream, skip, recursions)
+                skip.consume(parserState)
+                rootToken = start.match(parserState)
                 if (rootToken === ContextFreeToken.NOTHING) {
                     throw ParseException("No tokens matching start rule", 0)
                 }
-                skip.consume(inputStream, recursions)
+                skip.consume(parserState)
                 if (inputStream.hasNext()) {
                     throw ParseException("Unknown symbol in input", inputStream.position)
                 }
@@ -271,7 +277,7 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
         }
     }
 
-    private fun parseOrNull(input: CharStream, mutableState: M): R? {
+    private fun parseOrNull(input: AbstractCharStream, mutableState: M): R? {
         return try {
             parse(input, mutableState)
         } catch (e: ParseException) {
@@ -284,7 +290,7 @@ class Grammar<R,M : Grammar.MutableState> internal constructor() : Serializable 
      *
      * API Note: Enforces correct declaration of start symbol
      */
-    class ListenerDefinition<P> internal constructor() {
+    class Listener internal constructor() {
         internal lateinit var id: String
     }
 

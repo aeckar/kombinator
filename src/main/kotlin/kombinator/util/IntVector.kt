@@ -1,14 +1,9 @@
-package kombinator.internal
+package kombinator.util
 
+import io.github.aeckar.kanary.Protocol
+import io.github.aeckar.kanary.define
+import io.github.aeckar.kanary.fallback
 import kotlin.NoSuchElementException
-
-internal fun vectorOf(c: Char): IntVector = SingletonIntVector(c.code)
-
-internal fun vectorOf(vararg c: Char): IntVector {
-    val nArray = IntArray(c.size)
-    c.indices.forEach { nArray[it] = c[it].code }
-    return ArrayIntVector(nArray)
-}
 
 /**
  * Optimization of [List] for integers.
@@ -25,25 +20,16 @@ internal sealed class IntVector {
     final override fun toString() = indices.map { this[it] }.joinToString(prefix = "[", postfix = "]")
 }
 
-internal open class ArrayIntVector : IntVector {
-    final override var size: Int
+// Serialized as MutableIntVector
+internal open class ArrayIntVector protected constructor(initialSize: Int) : IntVector() {
+    final override var size: Int = initialSize
         protected set
     final override val indices get() = data.indices.let { it.first..it.last.coerceAtMost(size) }
 
-    protected var data: IntArray
+    protected var data: IntArray = IntArray(size)
 
     final override fun sum() = data.sum()
     final override operator fun get(index: Int) = data[index]
-
-    constructor(nArray: IntArray) {
-        size = nArray.size
-        data = nArray
-    }
-
-    protected constructor(initialSize: Int) {
-        size = initialSize
-        data = IntArray(size)
-    }
 
     final override fun isEmpty() = size == 0
     final override fun isNotEmpty() = size != 0
@@ -65,8 +51,12 @@ internal open class ArrayIntVector : IntVector {
         return result
     }
 
-    private companion object {
-        const val PRIME = 7
+    companion object : Protocol by define(
+        read = fallback {
+            MutableIntVector(readInt())
+        }
+    ) {
+        private const val PRIME = 7
     }
 }
 
@@ -91,7 +81,7 @@ internal class MutableIntVector(initialSize: Int = DEFAULT_SIZE) : ArrayIntVecto
         }
     }
 
-    private companion object {
+    companion object {
         const val DEFAULT_SIZE = 8
     }
 }
